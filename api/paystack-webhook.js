@@ -5,7 +5,12 @@ const L = require('./_lib');
 const raw = req => new Promise((ok, no) => { let b = ''; req.on('data', c => b += c); req.on('end', () => ok(b)); req.on('error', no); });
 module.exports = async (req, res) => {
   // Opening the URL in a browser is a quick way to check the deployment worked.
-  if (req.method === 'GET') return res.status(200).end(L.PS ? 'Paystack webhook endpoint is live' : 'Endpoint is live, but PAYSTACK_SECRET_KEY is missing in Vercel');
+  if (req.method === 'GET') {
+    // Lists the NAMES (never the values) of any Vercel environment variable that is missing.
+    const need = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'PAYSTACK_SECRET_KEY'];
+    const missing = need.filter(k => !process.env[k]);
+    return res.status(200).json({ live: true, missing, ready: missing.length === 0 });
+  }
   if (req.method !== 'POST') return res.status(405).end();
   if (!L.PS) return res.status(500).end();
   const body = await raw(req);
@@ -19,6 +24,6 @@ module.exports = async (req, res) => {
       if (d && d.metadata && d.metadata.user_id) await L.grant(d.metadata.user_id, ref, d.amount, d.plan.days);
     }
     res.status(200).end('ok');   // always answer 200 for events we handled or ignored
-  } catch (e) { res.status(500).end(); }   // 500 makes Paystack retry later
+  } catch (e) { console.error('webhook failed:', e.message); res.status(500).end(); }   // 500 makes Paystack retry later
 };
 module.exports.config = { api: { bodyParser: false } };
