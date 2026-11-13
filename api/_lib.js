@@ -1,7 +1,8 @@
 const crypto = require('crypto');
 const SB = process.env.SUPABASE_URL, SK = process.env.SUPABASE_SERVICE_ROLE_KEY, PS = process.env.PAYSTACK_SECRET_KEY;
 const PRICE_NGN = Number(process.env.PRICE_NGN || 2000);
-const H = { apikey: SK, Authorization: 'Bearer ' + SK, 'Content-Type': 'application/json' };
+const H = { apikey: SK, 'Content-Type': 'application/json' };
+if (SK && !SK.startsWith('sb_')) H.Authorization = 'Bearer ' + SK; // legacy JWT keys need it; new sb_secret_ keys must not send it
 
 // Ask Paystack directly whether this payment really succeeded (never trust the browser).
 async function paystackVerify(ref) {
@@ -17,19 +18,17 @@ async function getUntil(uid) {
   const j = await r.json();
   return (j[0] && j[0].premium_until) || null;
 }
-// Adds 365 days (from today, or from the current expiry if still active). Each reference counts once.
+// One-time payment = lifetime access. Each reference counts once.
+const LIFETIME = '2099-12-31T00:00:00.000Z';
 async function grant(uid, ref, amount) {
   const ins = await fetch(`${SB}/rest/v1/payments`, { method: 'POST', headers: { ...H, Prefer: 'return=minimal' }, body: JSON.stringify({ reference: ref, user_id: uid, amount }) });
   if (ins.status === 409) return { premium_until: await getUntil(uid), duplicate: true };
   if (!ins.ok) throw new Error('payment insert failed ' + ins.status);
-  const cur = await getUntil(uid);
-  const base = Math.max(cur ? new Date(cur).getTime() : 0, Date.now());
-  const until = new Date(base + 365 * 864e5).toISOString();
-  const up = await fetch(`${SB}/rest/v1/profiles?on_conflict=id`, { method: 'POST', headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ id: uid, premium_until: until }) });
+  const up = await fetch(`${SB}/rest/v1/profiles?on_conflict=id`, { method: 'POST', headers: { ...H, Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ id: uid, premium_until: LIFETIME }) });
   if (!up.ok) {
     await fetch(`${SB}/rest/v1/payments?reference=eq.${encodeURIComponent(ref)}`, { method: 'DELETE', headers: H });
     throw new Error('profile update failed ' + up.status);
   }
-  return { premium_until: until };
+  return { premium_until: LIFETIME };
 }
 module.exports = { SB, SK, PS, crypto, paystackVerify, grant };
